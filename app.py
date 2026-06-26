@@ -31,16 +31,707 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 IS_WINDOWS = platform.system() == "Windows"
 BASE_DIR = Path(__file__).parent
-STATIC_DIR = BASE_DIR / "static"
-STATIC_DIR.mkdir(exist_ok=True)
 CONFIG_FILE = BASE_DIR / "tg_tool_config.json"
+
+# ── Embedded HTML — toàn bộ giao diện nhúng thẳng vào app.py ──
+# Không cần tạo folder static/ riêng.
+# Nếu muốn tùy chỉnh giao diện, tạo file static/index.html (sẽ ưu tiên dùng).
+_EMBEDDED_HTML = r"""<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Telegram Tool v8</title>
+<style>
+:root{--bg:#0d1117;--bg2:#161b22;--bg3:#1c2128;--bg4:#21262d;--border:#30363d;--border2:#3d444d;--accent:#2563eb;--accent-h:#1d4ed8;--green:#16a34a;--green-h:#15803d;--red:#dc2626;--red-h:#b91c1c;--amber:#d97706;--amber-h:#b45309;--purple:#7c3aed;--purple-h:#6d28d9;--text:#e6edf3;--text2:#8b949e;--text3:#6e7681;--ok:#3fb950;--err:#f85149;--warn:#e3b341;--info:#58a6ff;--skip:#6e7681;--radius:8px;--radius-lg:12px;--shadow:0 4px 20px rgba(0,0,0,.4);--sidebar-w:220px;--log-w:380px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font:14px/1.5 'Segoe UI',system-ui,sans-serif;overflow:hidden;height:100vh;display:flex;flex-direction:column}
+.header{background:var(--bg2);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0;z-index:10}
+.logo{font-size:16px;font-weight:700;background:linear-gradient(135deg,#58a6ff,#a371f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap}
+.header-folder{flex:1;display:flex;align-items:center;gap:6px}
+.header-folder label{color:var(--text2);font-size:12px;white-space:nowrap}
+.header-folder input{flex:1;background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:6px;font-size:12px}
+.header-folder input:focus{outline:none;border-color:var(--accent)}
+.task-badge{background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:4px 10px;font-size:12px;color:var(--text2);white-space:nowrap;transition:.2s}
+.task-badge.running{color:var(--warn);border-color:var(--warn);background:rgba(227,179,65,.1)}
+.layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:var(--sidebar-w);background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0}
+.nav-section{padding:12px 8px 4px;color:var(--text3);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+.nav-item{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:6px;cursor:pointer;margin:2px 6px;color:var(--text2);font-size:13px;transition:.15s;user-select:none}
+.nav-item:hover{background:var(--bg3);color:var(--text)}
+.nav-item.active{background:rgba(37,99,235,.2);color:var(--info);font-weight:500}
+.nav-item .icon{font-size:15px;width:20px;text-align:center}
+.sidebar-bottom{margin-top:auto;padding:12px 8px;border-top:1px solid var(--border)}
+.version-tag{font-size:11px;color:var(--text3);text-align:center}
+.main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.tab-content{display:none;flex:1;overflow-y:auto;padding:16px;flex-direction:column;gap:12px}
+.tab-content.active{display:flex}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
+.card-header{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg3)}
+.card-header h3{font-size:13px;font-weight:600;color:var(--text)}
+.card-body{padding:12px 14px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+label.lbl{font-size:12px;color:var(--text2)}
+input[type=text],input[type=number],input[type=password],select,textarea{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:6px;font-size:13px;font-family:inherit;transition:border-color .15s}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+input[type=number]{width:80px}
+textarea{resize:vertical;min-height:80px}
+select{cursor:pointer}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500;font-family:inherit;transition:.15s;white-space:nowrap}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover:not(:disabled){background:var(--accent-h)}
+.btn-success{background:var(--green);color:#fff}
+.btn-success:hover:not(:disabled){background:var(--green-h)}
+.btn-danger{background:var(--red);color:#fff}
+.btn-danger:hover:not(:disabled){background:var(--red-h)}
+.btn-warn{background:var(--amber);color:#fff}
+.btn-warn:hover:not(:disabled){background:var(--amber-h)}
+.btn-purple{background:var(--purple);color:#fff}
+.btn-purple:hover:not(:disabled){background:var(--purple-h)}
+.btn-ghost{background:var(--bg3);border:1px solid var(--border);color:var(--text2)}
+.btn-ghost:hover:not(:disabled){background:var(--bg4);color:var(--text);border-color:var(--border2)}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-lg{padding:10px 20px;font-size:14px;width:100%;justify-content:center}
+.radio-group{display:flex;gap:4px;flex-wrap:wrap}
+.radio-opt{display:flex;align-items:center;gap:6px;padding:5px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:12px;transition:.15s}
+.radio-opt:hover{border-color:var(--border2)}
+.radio-opt input[type=radio]{accent-color:var(--accent)}
+.radio-opt.checked{border-color:var(--accent);background:rgba(37,99,235,.12);color:var(--info)}
+input[type=checkbox]{accent-color:var(--accent);cursor:pointer}
+.login-config{display:flex;flex-direction:column;gap:8px}
+.login-config .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.login-config label{font-size:12px;color:var(--text2);width:170px;flex-shrink:0}
+.accounts-table-wrap{flex:1;overflow:auto}
+.accounts-table{width:100%;border-collapse:collapse;font-size:12px}
+.accounts-table th{background:var(--bg3);padding:7px 8px;text-align:left;font-weight:600;color:var(--text2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:2;white-space:nowrap}
+.accounts-table td{padding:5px 6px;border-bottom:1px solid var(--border);vertical-align:middle}
+.accounts-table tr:hover td{background:rgba(255,255,255,.02)}
+.accounts-table input{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:4px 7px;border-radius:4px;font-size:12px;width:100%}
+.accounts-table input:focus{outline:none;border-color:var(--accent)}
+.accounts-table input.phone-field{width:130px}
+.accounts-table input.code-field{width:70px}
+.accounts-table input.twofa-field{width:110px}
+.accounts-table input.folder-field{width:120px}
+.accounts-table input.note-field{width:130px}
+.status-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:12px;font-size:11px;white-space:nowrap}
+.status-badge.ready{background:rgba(110,118,129,.15);color:var(--text3)}
+.status-badge.sending{background:rgba(227,179,65,.15);color:var(--warn)}
+.status-badge.code_sent{background:rgba(88,166,255,.15);color:var(--info)}
+.status-badge.logging_in{background:rgba(88,166,255,.15);color:var(--info)}
+.status-badge.need_2fa{background:rgba(227,179,65,.2);color:var(--warn)}
+.status-badge.done{background:rgba(63,185,80,.15);color:var(--ok)}
+.status-badge.error{background:rgba(248,81,73,.15);color:var(--err)}
+.status-badge.warn{background:rgba(227,179,65,.15);color:var(--warn)}
+.dot{width:6px;height:6px;border-radius:50%;background:currentColor;display:inline-block}
+.dot.pulse{animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.admin-layout{display:flex;gap:12px;flex:1;overflow:hidden;min-height:0}
+.admin-left{width:260px;flex-shrink:0;display:flex;flex-direction:column;gap:10px;overflow-y:auto}
+.admin-right{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px}
+.acc-list-wrap{flex:1;overflow:auto;max-height:240px}
+.acc-checkbox-list{display:flex;flex-direction:column;gap:2px}
+.acc-check-item{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:5px;cursor:pointer}
+.acc-check-item:hover{background:var(--bg3)}
+.acc-check-item label{cursor:pointer;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.search-box{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:5px 10px;border-radius:6px;font-size:12px;width:100%}
+.search-box:focus{outline:none;border-color:var(--accent)}
+.sub-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}
+.sub-tab{padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;background:var(--bg3);border:1px solid var(--border);color:var(--text2);transition:.15s;white-space:nowrap}
+.sub-tab:hover{border-color:var(--border2);color:var(--text)}
+.sub-tab.active{background:rgba(37,99,235,.2);border-color:var(--accent);color:var(--info)}
+.sub-panel{display:none}
+.sub-panel.active{display:flex;flex-direction:column;gap:10px}
+.sync-windows-list{display:flex;flex-direction:column;gap:3px;max-height:160px;overflow:auto}
+.window-item{display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--bg3);border-radius:5px;font-size:12px}
+.window-item .wname{flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis}
+.window-item .winfo{color:var(--text3);font-size:11px}
+.log-panel{width:var(--log-w);border-left:1px solid var(--border);display:flex;flex-direction:column;background:var(--bg2);flex-shrink:0;transition:width .25s}
+.log-panel.collapsed{width:36px}
+.log-header{padding:8px 10px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;background:var(--bg3);flex-shrink:0}
+.log-header .log-title{font-size:12px;font-weight:600;color:var(--text2);flex:1;white-space:nowrap;overflow:hidden}
+.log-header select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:2px 6px;border-radius:4px;font-size:11px}
+.log-body{flex:1;overflow-y:auto;padding:6px;font-family:'Consolas','Courier New',monospace;font-size:11.5px;line-height:1.5}
+.log-line{padding:1px 4px;border-radius:3px;word-break:break-all}
+.log-line:hover{background:rgba(255,255,255,.04)}
+.log-line.ok{color:var(--ok)}
+.log-line.error{color:var(--err)}
+.log-line.fresh,.log-line.warn{color:var(--warn)}
+.log-line.no_perm,.log-line.not_member,.log-line.privacy,.log-line.invalid{color:#f0883e}
+.log-line.skip{color:var(--skip)}
+.log-line.info{color:var(--info)}
+.log-line .ts{color:var(--text3);font-size:10px;margin-right:4px}
+.log-toggle{cursor:pointer;padding:4px;border-radius:4px;background:none;border:none;color:var(--text2);font-size:14px;transition:.15s}
+.log-toggle:hover{background:var(--bg4);color:var(--text)}
+#toast-container{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px;min-width:240px;max-width:360px;box-shadow:var(--shadow);pointer-events:all;display:flex;align-items:flex-start;gap:8px;animation:slideIn .2s ease}
+.toast.ok{border-color:var(--ok)}
+.toast.error{border-color:var(--err)}
+.toast.warn{border-color:var(--warn)}
+.toast-icon{font-size:15px}
+.toast-msg{flex:1;line-height:1.4}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+@keyframes fadeOut{from{opacity:1}to{opacity:0;transform:translateX(20px)}}
+.text-sm{font-size:11px;color:var(--text3)}
+.flex{display:flex}
+.gap-2{gap:6px}
+.items-center{align-items:center}
+.flex-1{flex:1}
+.mt-2{margin-top:6px}
+.mt-3{margin-top:12px}
+.bold{font-weight:600}
+.empty-state{text-align:center;padding:24px;color:var(--text3);font-size:12px}
+.cols-2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.w-full{width:100%}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo">&#x1F680; Multi-Telegram Tool v8</div>
+  <div class="header-folder">
+    <label>Thu muc goc:</label>
+    <input id="base-folder" type="text" placeholder="Chon thu muc luu tai khoan...">
+    <button class="btn btn-ghost btn-sm" onclick="browseFolder()">&#x1F4C1; Chon</button>
+  </div>
+  <div id="task-badge" class="task-badge">&#x2699; 0 task</div>
+  <button class="btn btn-danger btn-sm" onclick="cancelAll()">&#x23F9; Huy het</button>
+  <button class="btn btn-ghost btn-sm" onclick="clearLog()">&#x1F5D1; Xoa log</button>
+</div>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="nav-section">Chuc nang</div>
+    <div class="nav-item active" onclick="switchTab('login')" id="nav-login"><span class="icon">&#x1F510;</span> Dang nhap</div>
+    <div class="nav-item" onclick="switchTab('admin')" id="nav-admin"><span class="icon">&#x1F6E0;&#xFE0F;</span> Admin &amp; Channel</div>
+    <div class="nav-item" onclick="switchTab('sync')" id="nav-sync"><span class="icon">&#x1F504;</span> Dong bo Tab</div>
+    <div class="sidebar-bottom"><div class="version-tag">v8 &middot; Web Interface</div></div>
+  </aside>
+  <div class="main">
+    <!-- TAB LOGIN -->
+    <div id="tab-login" class="tab-content active">
+      <div class="card">
+        <div class="card-header"><h3>&#x2699;&#xFE0F; Cau hinh dang nhap</h3></div>
+        <div class="card-body">
+          <div class="login-config">
+            <div class="row">
+              <label class="lbl">Telegram Portable (tuy chon):</label>
+              <input id="portable-src" type="text" style="flex:1" placeholder="Folder chua Telegram.exe">
+              <button class="btn btn-ghost btn-sm" onclick="browsePortable()">&#x1F4C1; Chon</button>
+            </div>
+            <div class="row">
+              <label class="lbl">Ten folder sau login:</label>
+              <div class="radio-group">
+                <label class="radio-opt checked"><input type="radio" name="naming" value="username" checked onchange="updateNaming(this)"> @username</label>
+                <label class="radio-opt"><input type="radio" name="naming" value="firstname" onchange="updateNaming(this)"> Ten hien thi</label>
+                <label class="radio-opt"><input type="radio" name="naming" value="prefix" onchange="updateNaming(this)"> Prefix:</label>
+                <input id="prefix-entry" type="text" placeholder="vd: client" style="width:100px">
+                <label class="radio-opt"><input type="radio" name="naming" value="manual" onchange="updateNaming(this)"> Giu nguyen</label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <h3>&#x1F4D2; Danh sach tai khoan</h3>
+          <div class="flex gap-2 items-center">
+            <label class="lbl">So acc:</label>
+            <input id="num-acc" type="number" value="5" min="1" max="200" style="width:65px">
+            <button class="btn btn-ghost btn-sm" onclick="genRows()">&#x1F4CB; Tao bang</button>
+            <button class="btn btn-purple btn-sm" onclick="openBulkPhone()">&#x1F4E5; Nhap SDT</button>
+            <button class="btn btn-warn btn-sm" onclick="openApply2FA()">&#x1F512; Ap 2FA</button>
+            <button class="btn btn-danger btn-sm" onclick="clearRows()">&#x1F5D1; Xoa het</button>
+          </div>
+        </div>
+        <div class="card-body" style="padding:6px 14px 8px">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap;margin-bottom:8px">
+            <button class="btn btn-warn btn-sm" onclick="sendAll()">&#x1F4E9; Gui ma TAT CA</button>
+            <button class="btn btn-purple btn-sm" onclick="openBulkCode()">&#x1F4DD; Nhap code</button>
+            <button class="btn btn-primary btn-sm" onclick="loginAll()">&#x1F510; Dang nhap TAT CA</button>
+            <button class="btn btn-success btn-sm" onclick="launchTile()">&#x1FA9F; Mo + chia man hinh</button>
+            <button class="btn btn-danger btn-sm" onclick="closeAllTabs()">&#x274C; Dong tat ca tab</button>
+          </div>
+        </div>
+        <div class="accounts-table-wrap" style="max-height:420px;overflow:auto;border-top:1px solid var(--border)">
+          <table class="accounts-table">
+            <thead><tr>
+              <th style="width:36px">#</th><th>Folder</th><th>Ghi chu</th><th>SDT</th>
+              <th>Code</th><th>2FA</th><th style="width:175px">Hanh dong</th><th>Trang thai</th>
+            </tr></thead>
+            <tbody id="accounts-tbody">
+              <tr><td colspan="8" class="empty-state">Chua co dong nao &middot; Bam "Tao bang" de bat dau</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <!-- TAB ADMIN -->
+    <div id="tab-admin" class="tab-content">
+      <div class="admin-layout">
+        <div class="admin-left">
+          <div class="card" style="flex:1">
+            <div class="card-header">
+              <h3>&#x1F465; Tai khoan</h3>
+              <button class="btn btn-ghost btn-sm" onclick="scanAccounts()">&#x1F50D; Quet</button>
+            </div>
+            <div class="card-body" style="padding:8px">
+              <input class="search-box" id="admin-search" placeholder="&#x1F50D; Tim acc..." oninput="filterAccList(this.value)" style="margin-bottom:6px">
+              <div class="flex gap-2" style="margin-bottom:6px;flex-wrap:wrap">
+                <button class="btn btn-ghost btn-sm" style="flex:1" onclick="selectAll()">&#x2713; Tat ca</button>
+                <button class="btn btn-ghost btn-sm" style="flex:1" onclick="selectNone()">&#x2715; Bo</button>
+                <button class="btn btn-ghost btn-sm" style="flex:1" onclick="selectInvert()">&#x2195; Dao</button>
+              </div>
+              <div class="acc-list-wrap"><div class="acc-checkbox-list" id="acc-checkbox-list"><div class="empty-state">Bam Quet de tai danh sach</div></div></div>
+              <div id="acc-selected-count" class="text-sm mt-2">0 acc duoc chon</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-body" style="padding:10px">
+              <div class="form-group" style="gap:8px">
+                <div class="flex gap-2 items-center">
+                  <span class="lbl">Che do:</span>
+                  <label class="radio-opt checked" id="r-parallel"><input type="radio" name="run-mode" value="parallel" checked onchange="updateRunMode()"> Song song</label>
+                  <label class="radio-opt" id="r-serial"><input type="radio" name="run-mode" value="serial" onchange="updateRunMode()"> Tuan tu</label>
+                </div>
+                <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+                  <span class="lbl">Delay (s):</span><input id="run-delay" type="number" value="0.5" min="0" step="0.1" style="width:70px">
+                  <span class="lbl">Max:</span><input id="run-max" type="number" value="8" min="1" style="width:60px">
+                </div>
+                <button class="btn btn-danger btn-sm w-full" onclick="cancelAll()">&#x23F9; DUNG TAT CA</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="admin-right">
+          <div class="sub-tabs">
+            <div class="sub-tab active" onclick="switchSubTab('create-ch')" id="st-create-ch">&#x1F3D7;&#xFE0F; Tao channel</div>
+            <div class="sub-tab" onclick="switchSubTab('create-pub')" id="st-create-pub">&#x1F310; Kenh public</div>
+            <div class="sub-tab" onclick="switchSubTab('promote')" id="st-promote">&#x1F46E; Cap admin</div>
+            <div class="sub-tab" onclick="switchSubTab('folder-prom')" id="st-folder-prom">&#x1F4C2; Theo Folder TG</div>
+            <div class="sub-tab" onclick="switchSubTab('auto-folder')" id="st-auto-folder">&#x1F4C1; Auto Folder</div>
+            <div class="sub-tab" onclick="switchSubTab('auto-promote')" id="st-auto-promote">&#x1F465; Auto-promote</div>
+            <div class="sub-tab" onclick="switchSubTab('consolidate')" id="st-consolidate">&#x1F3AF; Don ve acc tong</div>
+            <div class="sub-tab" onclick="switchSubTab('delete-acc')" id="st-delete-acc">&#x1F5D1;&#xFE0F; Xoa account</div>
+          </div>
+          <!-- Sub 1: Tao channel -->
+          <div class="sub-panel active" id="sp-create-ch"><div class="card">
+            <div class="card-header"><h3>&#x1F3D7;&#xFE0F; Tao Channel / Group rieng tu</h3></div>
+            <div class="card-body">
+              <div class="cols-2">
+                <div class="form-group"><label class="lbl">So kenh moi acc</label><input id="ch-amount" type="number" value="1" min="1"></div>
+                <div class="form-group"><label class="lbl">Prefix ten kenh</label><input id="ch-prefix" type="text" value="vip_" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Mo ta (about)</label><input id="ch-about" type="text" placeholder="Mo ta kenh..." style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Delay giua kenh (s)</label><input id="ch-delay" type="number" value="1" min="0" step="0.5"></div>
+              </div>
+              <div class="flex gap-2 items-center mt-2">
+                <label class="radio-opt checked"><input type="radio" name="ch-type" value="false" checked> Channel</label>
+                <label class="radio-opt"><input type="radio" name="ch-type" value="true"> Megagroup</label>
+              </div>
+              <div class="text-sm mt-2">Link invite luu vao <code>channels.txt</code></div>
+              <button class="btn btn-success btn-lg mt-3" onclick="runCreateChannels()">&#x25B6; TAO CHANNEL</button>
+            </div>
+          </div></div>
+          <!-- Sub 2: Kenh public -->
+          <div class="sub-panel" id="sp-create-pub"><div class="card">
+            <div class="card-header"><h3>&#x1F310; Tao Kenh Cong Khai (co @username)</h3></div>
+            <div class="card-body">
+              <div class="cols-2">
+                <div class="form-group"><label class="lbl">So kenh moi acc</label><input id="pub-amount" type="number" value="1" min="1"></div>
+                <div class="form-group"><label class="lbl">Ten kenh (dung {n} danh so)</label><input id="pub-title" type="text" value="Kenh {n}" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Username prefix</label><input id="pub-uname" type="text" value="channel" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Suffix mode</label>
+                  <select id="pub-suffix" style="width:100%">
+                    <option value="random_3">random_3 (3 ky tu)</option>
+                    <option value="random_2">random_2 (2 ky tu)</option>
+                    <option value="random_1">random_1 (1 ky tu)</option>
+                    <option value="chaos">chaos (5-8 ky tu)</option>
+                  </select>
+                </div>
+                <div class="form-group"><label class="lbl">Mo ta (about)</label><input id="pub-about" type="text" placeholder="Mo ta kenh..." style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Delay giua kenh (s)</label><input id="pub-delay" type="number" value="2" min="0" step="0.5"></div>
+                <div class="form-group"><label class="lbl">Anh kenh (duong dan file)</label><input id="pub-photo" type="text" placeholder="D:\hinh.jpg" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Welcome message</label><input id="pub-welcome" type="text" placeholder="Tin nhan dau tien..." style="width:100%"></div>
+              </div>
+              <button class="btn btn-success btn-lg mt-3" onclick="runCreatePublic()">&#x25B6; TAO KENH PUBLIC</button>
+            </div>
+          </div></div>
+          <!-- Sub 3: Cap admin -->
+          <div class="sub-panel" id="sp-promote"><div class="card">
+            <div class="card-header"><h3>&#x1F46E; Cap Admin cho User</h3></div>
+            <div class="card-body">
+              <div class="cols-2">
+                <div class="form-group"><label class="lbl">Danh sach kenh</label><textarea id="prom-channels" rows="4" placeholder="@channel1&#10;t.me/channel2"></textarea></div>
+                <div class="form-group"><label class="lbl">Username can cap admin</label><textarea id="prom-users" rows="4" placeholder="@user1&#10;user2"></textarea></div>
+              </div>
+              <div class="flex gap-2 items-center mt-2"><label><input type="checkbox" id="prom-full" checked> Toan quyen admin</label></div>
+              <div class="text-sm mt-2">Load tu channels.txt: <button class="btn btn-ghost btn-sm" onclick="loadChannelsTxt()">&#x1F4C2; Tai</button></div>
+              <button class="btn btn-success btn-lg mt-3" onclick="runPromote()">&#x25B6; CAP ADMIN</button>
+            </div>
+          </div></div>
+          <!-- Sub 4: Folder promote -->
+          <div class="sub-panel" id="sp-folder-prom"><div class="card">
+            <div class="card-header"><h3>&#x1F4C2; Cap Admin Theo Folder Telegram</h3></div>
+            <div class="card-body">
+              <div class="cols-2">
+                <div class="form-group"><label class="lbl">Ten folder Telegram</label><input id="fp-folder" type="text" placeholder="Ten folder trong TG" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Username can cap admin</label><textarea id="fp-users" rows="3" placeholder="@user1&#10;user2"></textarea></div>
+              </div>
+              <div class="flex gap-2 items-center mt-2"><label><input type="checkbox" id="fp-full" checked> Toan quyen admin</label></div>
+              <button class="btn btn-success btn-lg mt-3" onclick="runFolderPromote()">&#x25B6; CAP ADMIN THEO FOLDER</button>
+            </div>
+          </div></div>
+          <!-- Sub 5: Auto Folder -->
+          <div class="sub-panel" id="sp-auto-folder"><div class="card">
+            <div class="card-header"><h3>&#x1F4C1; Gom kenh admin vao Folder TG</h3></div>
+            <div class="card-body">
+              <div class="form-group"><label class="lbl">Ten folder muon tao/cap nhat</label><input id="af-name" type="text" value="Admin Channels" style="width:100%"></div>
+              <div class="text-sm mt-2">Tool quet tat ca kenh acc dang la admin, gom vao 1 folder TG</div>
+              <button class="btn btn-success btn-lg mt-3" onclick="runAutoFolder()">&#x25B6; AUTO FOLDER</button>
+            </div>
+          </div></div>
+          <!-- Sub 6: Auto promote -->
+          <div class="sub-panel" id="sp-auto-promote"><div class="card">
+            <div class="card-header"><h3>&#x1F465; Cap Admin vao Tat Ca Kenh Dang Admin</h3></div>
+            <div class="card-body">
+              <div class="form-group"><label class="lbl">Username can cap admin</label><textarea id="ap-users" rows="3" placeholder="@user1&#10;user2&#10;user3"></textarea></div>
+              <div class="flex gap-2 items-center mt-2"><label><input type="checkbox" id="ap-full" checked> Toan quyen admin</label></div>
+              <button class="btn btn-success btn-lg mt-3" onclick="runAutoPromote()">&#x25B6; AUTO-PROMOTE</button>
+            </div>
+          </div></div>
+          <!-- Sub 7: Consolidate -->
+          <div class="sub-panel" id="sp-consolidate"><div class="card">
+            <div class="card-header"><h3>&#x1F3AF; Don Kenh Ve Acc Tong qua Chatlist Link</h3></div>
+            <div class="card-body">
+              <div class="cols-2">
+                <div class="form-group"><label class="lbl">Acc tong (folder name)</label><input id="cons-master" type="text" placeholder="vd: master_acc" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Ten folder TG de export</label><input id="cons-folder" type="text" value="Master" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Tieu de chatlist link</label><input id="cons-title" type="text" value="My Folder" style="width:100%"></div>
+                <div class="form-group"><label class="lbl">Kenh private</label>
+                  <select id="cons-private" style="width:100%">
+                    <option value="skip">Bo qua (skip)</option>
+                    <option value="export">Export invite truoc</option>
+                    <option value="all">Dua tat ca vao</option>
+                  </select>
+                </div>
+              </div>
+              <div class="text-sm mt-2">Chatlist links luu vao <code>chatlist_links.txt</code></div>
+              <button class="btn btn-success btn-lg mt-3" onclick="runConsolidate()">&#x25B6; DON VE ACC TONG</button>
+            </div>
+          </div></div>
+          <!-- Sub 8: Delete -->
+          <div class="sub-panel" id="sp-delete-acc"><div class="card" style="border-color:var(--red)">
+            <div class="card-header" style="border-color:var(--red);background:rgba(220,38,38,.1)">
+              <h3 style="color:var(--err)">&#x1F5D1;&#xFE0F; Xoa Account Vinh Vien</h3>
+            </div>
+            <div class="card-body">
+              <div style="background:rgba(220,38,38,.1);border:1px solid var(--red);border-radius:6px;padding:10px;margin-bottom:12px">
+                <div class="bold" style="color:var(--err)">&#x26A0;&#xFE0F; CANH BAO</div>
+                <div class="text-sm" style="color:var(--err);margin-top:4px">Thao tac nay XOA VINH VIEN tai khoan Telegram. KHONG THE UNDO.</div>
+              </div>
+              <div class="form-group"><label class="lbl">Ly do xoa (tuy chon)</label><input id="del-reason" type="text" placeholder="Khong can thiet nua..." style="width:100%"></div>
+              <div class="flex gap-2 items-center mt-2" style="background:rgba(220,38,38,.1);padding:8px;border-radius:6px">
+                <input type="checkbox" id="del-confirm1"><label for="del-confirm1" style="cursor:pointer;font-size:12px">Toi hieu hanh dong nay KHONG THE HOAN TAC</label>
+              </div>
+              <div class="flex gap-2 items-center mt-2" style="background:rgba(220,38,38,.1);padding:8px;border-radius:6px">
+                <input type="checkbox" id="del-confirm2"><label for="del-confirm2" style="cursor:pointer;font-size:12px">Toi da backup du lieu can thiet</label>
+              </div>
+              <button class="btn btn-danger btn-lg mt-3" onclick="runDeleteAccounts()">&#x1F5D1;&#xFE0F; XOA ACCOUNT (KHONG THE UNDO)</button>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+    <!-- TAB SYNC -->
+    <div id="tab-sync" class="tab-content">
+      <div class="card">
+        <div class="card-header"><h3>&#x1F5A5;&#xFE0F; Tab Telegram dang theo doi</h3></div>
+        <div class="card-body">
+          <div class="text-sm" style="margin-bottom:8px;color:var(--text3)">Chi thao tac tren tab Telegram do tool tu mo. Tab khac tren may KHONG bi dung vao.</div>
+          <div class="flex gap-2 items-center" style="margin-bottom:10px;flex-wrap:wrap">
+            <span class="bold" id="sync-count">0 tab</span>
+            <button class="btn btn-ghost btn-sm" onclick="refreshWindows()">&#x1F504; Cap nhat</button>
+            <button class="btn btn-ghost btn-sm" onclick="showWindowList()">&#x1F4CB; Xem danh sach</button>
+          </div>
+          <div class="sync-windows-list" id="sync-windows-list">
+            <div class="empty-state">Chua co tab nao &middot; Vao Tab Dang nhap &#x2192; Mo + chia man hinh</div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>&#x270D;&#xFE0F; Gui Text Dong Bo Toi Tat Ca Tab</h3></div>
+        <div class="card-body">
+          <div class="text-sm" style="margin-bottom:8px;color:var(--text3)">Tool focus tung tab, paste, Enter (neu chon). Dam bao tab TG dang o o chat.</div>
+          <textarea id="sync-text" rows="5" class="w-full" placeholder="Nhap noi dung gui...">Hello world!</textarea>
+          <div class="flex gap-2 items-center mt-2" style="flex-wrap:wrap">
+            <label><input type="checkbox" id="sync-enter" checked> Nhan Enter (gui luon)</label>
+            <span class="lbl" style="margin-left:12px">Delay giua tab (s):</span>
+            <input type="number" id="sync-delay" value="0.3" min="0" step="0.1" style="width:70px">
+          </div>
+          <button class="btn btn-success btn-lg mt-3" onclick="broadcastText()">&#x1F4E4; GUI DONG BO TOI TAT CA TAB</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>&#x1F3DB;&#xFE0F; Dieu Khien Cua So</h3></div>
+        <div class="card-body">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="retileWindows()">&#x1FA9F; Re-tile (xep luoi)</button>
+            <button class="btn btn-ghost" onclick="bringToFront()">&#x1F4CD; Dua len tren</button>
+            <button class="btn btn-danger" onclick="closeAllTabs()">&#x274C; DONG TAT CA TAB</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Log panel -->
+  <div class="log-panel" id="log-panel">
+    <div class="log-header">
+      <span class="log-title" id="log-title">&#x1F4DC; Log</span>
+      <select id="log-filter" onchange="filterLog(this.value)">
+        <option value="all">Tat ca</option>
+        <option value="ok,error">OK + Loi</option>
+        <option value="error">Chi loi</option>
+        <option value="info,ok">Info + OK</option>
+      </select>
+      <button class="log-toggle" onclick="clearLog()" title="Xoa log">&#x1F5D1;</button>
+      <button class="log-toggle" onclick="saveLog()" title="Luu log">&#x1F4BE;</button>
+      <button class="log-toggle" id="log-collapse-btn" onclick="toggleLog()">&#x25C4;</button>
+    </div>
+    <div class="log-body" id="log-body"></div>
+  </div>
+</div>
+<div id="toast-container"></div>
+<div id="modal-overlay" onclick="closeModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000"></div>
+<div id="modal" style="display:none;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:12px;z-index:1001;width:560px;max-width:95vw;max-height:90vh;overflow-y:auto;box-shadow:var(--shadow)">
+  <div class="card-header" style="border-radius:12px 12px 0 0"><h3 id="modal-title"></h3><button class="log-toggle" onclick="closeModal()">&#x2715;</button></div>
+  <div id="modal-body" style="padding:16px"></div>
+</div>
+<script>
+let ws=null,rows=[],adminAccounts=[],selectedAdminAccs=new Set(),trackedWindows=[],logFilter='all',logCollapsed=false,rowCounter=0,config={};
+function connectWS(){
+  ws=new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen=()=>console.log('WS ok');
+  ws.onmessage=(e)=>{const m=JSON.parse(e.data);handleWsMessage(m)};
+  ws.onclose=()=>setTimeout(connectWS,2000);
+  ws.onerror=()=>ws.close();
+}
+function handleWsMessage(m){
+  switch(m.type){
+    case 'log':appendLog(m.data);break;
+    case 'log_clear':document.getElementById('log-body').innerHTML='';break;
+    case 'task_count':updateTaskBadge(m.data);break;
+    case 'config':config=m.data;applyConfig(config);break;
+    case 'login_rows':m.data.forEach(r=>updateRowStatus(r));break;
+    case 'row_status':updateRowStatus(m.data);break;
+    case 'row_folder':updateRowFolder(m.data);break;
+    case 'windows':updateWindowList(m.data);break;
+  }
+}
+async function api(method,url,body){
+  const opts={method,headers:{'Content-Type':'application/json'}};
+  if(body!==undefined)opts.body=JSON.stringify(body);
+  const r=await fetch(url,opts);return r.json();
+}
+const get=(url)=>api('GET',url);
+const post=(url,body)=>api('POST',url,body);
+function applyConfig(cfg){
+  if(cfg.base_folder)document.getElementById('base-folder').value=cfg.base_folder;
+  if(cfg.portable_src)document.getElementById('portable-src').value=cfg.portable_src;
+  if(cfg.naming_mode)document.querySelectorAll('[name="naming"]').forEach(r=>{r.checked=r.value===cfg.naming_mode;r.closest('.radio-opt')?.classList.toggle('checked',r.checked)});
+  if(cfg.prefix_entry)document.getElementById('prefix-entry').value=cfg.prefix_entry;
+  if(cfg.sync_text)document.getElementById('sync-text').value=cfg.sync_text;
+  if(cfg.sync_delay)document.getElementById('sync-delay').value=cfg.sync_delay;
+}
+function saveConfig(extra={}){
+  const cfg={base_folder:document.getElementById('base-folder').value,portable_src:document.getElementById('portable-src').value,naming_mode:document.querySelector('[name="naming"]:checked')?.value||'username',prefix_entry:document.getElementById('prefix-entry').value,sync_text:document.getElementById('sync-text').value,sync_delay:document.getElementById('sync-delay').value,...extra};
+  post('/api/config',cfg);
+}
+document.addEventListener('DOMContentLoaded',()=>{document.getElementById('base-folder').addEventListener('change',()=>saveConfig())});
+async function browseFolder(){const r=await post('/api/browse-folder',{});if(r.path){document.getElementById('base-folder').value=r.path;saveConfig();}}
+async function browsePortable(){const r=await post('/api/browse-folder',{});if(r.path)document.getElementById('portable-src').value=r.path;}
+function switchTab(id){document.querySelectorAll('.tab-content').forEach(el=>el.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));document.getElementById('tab-'+id).classList.add('active');document.getElementById('nav-'+id).classList.add('active');saveConfig({last_tab:id});}
+function switchSubTab(id){document.querySelectorAll('.sub-tab').forEach(el=>el.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(el=>el.classList.remove('active'));document.getElementById('st-'+id).classList.add('active');document.getElementById('sp-'+id).classList.add('active');}
+function appendLog(entry){
+  const levels=logFilter==='all'?null:logFilter.split(',');
+  if(levels&&!levels.includes(entry.level))return;
+  const body=document.getElementById('log-body');
+  const line=document.createElement('div');
+  line.className='log-line '+(entry.level||'info');
+  line.dataset.level=entry.level||'info';
+  line.innerHTML=`<span class="ts">${entry.ts}</span>${escHtml(entry.msg)}`;
+  body.appendChild(line);
+  if(body.children.length>3000)body.removeChild(body.firstChild);
+  body.scrollTop=body.scrollHeight;
+}
+function filterLog(val){logFilter=val;document.querySelectorAll('.log-line').forEach(el=>{const lvl=el.dataset.level||'info';el.style.display=(val==='all'||val.split(',').includes(lvl))?'':'none'});}
+function clearLog(){post('/api/logs/clear',{});}
+function saveLog(){const lines=Array.from(document.querySelectorAll('.log-line')).map(el=>el.textContent).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([lines],{type:'text/plain'}));a.download=`tg-log-${Date.now()}.txt`;a.click();}
+function toggleLog(){logCollapsed=!logCollapsed;document.getElementById('log-panel').classList.toggle('collapsed',logCollapsed);document.getElementById('log-collapse-btn').textContent=logCollapsed?'\u25BA':'\u25C4';document.getElementById('log-title').style.display=logCollapsed?'none':'';}
+function updateTaskBadge(n){const el=document.getElementById('task-badge');el.textContent=`\u2699 ${n} task`;el.classList.toggle('running',n>0);}
+async function cancelAll(){const r=await post('/api/tasks/cancel-all',{});toast(`Da yeu cau huy ${r.cancelled} task`,'warn');}
+function makeRowId(){return 'row_'+(++rowCounter);}
+function genRows(){const n=parseInt(document.getElementById('num-acc').value)||5;clearRows();for(let i=0;i<n;i++)addRow();}
+function addRow(data={}){
+  const id=data.id||makeRowId();
+  const row={id,folder:data.folder||'',note:data.note||'',phone:data.phone||'',code:data.code||'',twofa:data.twofa||'',status:data.status||'ready',status_text:data.status_text||'\u23F8 San sang'};
+  rows.push(row);renderRow(row);syncRowsToServer();return row;
+}
+function renderRow(row){
+  const tbody=document.getElementById('accounts-tbody');
+  const empty=tbody.querySelector('[colspan]');if(empty)empty.parentElement.remove();
+  const idx=rows.indexOf(row)+1;
+  const tr=document.createElement('tr');tr.id='tr-'+row.id;
+  tr.innerHTML=`<td style="color:var(--text3)">${idx}</td>
+    <td><input class="folder-field" type="text" placeholder="acc_${idx}" value="${escAttr(row.folder)}" oninput="rowField('${row.id}','folder',this.value)"></td>
+    <td><input class="note-field" type="text" placeholder="ghi chu" value="${escAttr(row.note)}" oninput="rowField('${row.id}','note',this.value)"></td>
+    <td><input class="phone-field" type="text" placeholder="+84..." value="${escAttr(row.phone)}" oninput="rowField('${row.id}','phone',this.value)"></td>
+    <td><input class="code-field" type="text" placeholder="12345" value="${escAttr(row.code)}" oninput="rowField('${row.id}','code',this.value)"></td>
+    <td><input class="twofa-field" type="password" placeholder="(neu co)" oninput="rowField('${row.id}','twofa',this.value)"></td>
+    <td style="white-space:nowrap">
+      <button class="btn btn-warn btn-sm" onclick="sendCode('${row.id}')">&#x1F4E9; Gui ma</button>
+      <button class="btn btn-primary btn-sm" onclick="signIn('${row.id}')">&#x1F510; Login</button>
+    </td>
+    <td id="status-${row.id}"><span class="status-badge ${row.status}"><span class="dot"></span>${escHtml(row.status_text)}</span></td>`;
+  tbody.appendChild(tr);
+}
+function rowField(id,field,val){const row=rows.find(r=>r.id===id);if(row)row[field]=val;}
+function clearRows(){rows=[];document.getElementById('accounts-tbody').innerHTML='<tr><td colspan="8" class="empty-state">Chua co dong nao &middot; Bam "Tao bang" de bat dau</td></tr>';}
+function updateRowStatus(data){
+  const row=rows.find(r=>r.id===data.id);
+  if(row){row.status=data.status;row.status_text=data.text||data.status_text||'';}
+  const el=document.getElementById('status-'+data.id);if(!el)return;
+  const pulse=['sending','logging_in'].includes(data.status);
+  el.innerHTML=`<span class="status-badge ${data.status}"><span class="dot ${pulse?'pulse':''}"></span>${escHtml(data.text||data.status_text||data.status)}</span>`;
+}
+function updateRowFolder(data){const row=rows.find(r=>r.id===data.id);if(row)row.folder=data.folder;const tr=document.getElementById('tr-'+data.id);if(tr){const inp=tr.querySelector('.folder-field');if(inp)inp.value=data.folder;}}
+function syncRowsToServer(){post('/api/login/rows/sync',{rows:rows.map(r=>({...r}))});}
+async function sendCode(rowId){
+  const row=rows.find(r=>r.id===rowId);if(!row)return;
+  const r=await post(`/api/login/send-code/${rowId}`,{base_folder:document.getElementById('base-folder').value,phone:row.phone,folder:row.folder||('acc_'+rowId)});
+  if(!r.ok)toast(r.msg,'error');
+}
+async function signIn(rowId){
+  const row=rows.find(r=>r.id===rowId);if(!row)return;
+  const tr=document.getElementById('tr-'+rowId);
+  const twofaInput=tr?.querySelector('.twofa-field');
+  const r=await post(`/api/login/sign-in/${rowId}`,{base_folder:document.getElementById('base-folder').value,code:row.code,twofa:twofaInput?.value||'',naming_mode:document.querySelector('[name="naming"]:checked')?.value||'username',prefix:document.getElementById('prefix-entry').value,portable_src:document.getElementById('portable-src').value});
+  if(!r.ok)toast(r.msg,'error');
+}
+async function sendAll(){
+  const base=document.getElementById('base-folder').value;
+  if(!base){toast('Chua chon thu muc goc!','error');return;}
+  syncRowsToServer();
+  const r=await post('/api/login/send-all',{base_folder:base,rows});
+  toast(`Queue gui ma ${r.count} acc`,'info');
+}
+async function loginAll(){
+  syncRowsToServer();
+  const targets=rows.filter(r=>r.code&&r.status==='code_sent');
+  if(!targets.length){toast('Khong co acc san sang login','warn');return;}
+  for(const row of targets)await signIn(row.id);
+  toast(`Da queue login ${targets.length} acc`,'info');
+}
+function openBulkPhone(){showModal('Nhap SDT Hang Loat',`
+  <div class="form-group"><label class="lbl">2FA chung (tuy chon)</label><input id="bulk-common-2fa" type="password" placeholder="(de trong neu khong co)" style="width:100%"></div>
+  <div class="form-group mt-2"><label class="lbl">Moi dong: SDT hoac SDT | 2FA</label><textarea id="bulk-phones" rows="10" style="width:100%;font-family:monospace" placeholder="+84912345678\n+84987654321 | password2FA"></textarea></div>
+  <div class="flex gap-2 mt-3"><button class="btn btn-success" onclick="applyBulkPhones()">Ap dung</button><button class="btn btn-ghost" onclick="closeModal()">Huy</button></div>`);}
+function applyBulkPhones(){
+  const common2fa=document.getElementById('bulk-common-2fa').value.trim();
+  const text=document.getElementById('bulk-phones').value.trim();
+  const entries=[];
+  for(const line of text.split('\n')){const l=line.trim();if(!l)continue;const parts=l.split(/\s*\|\s*|\t+|\s{2,}/);let phone=parts[0].replace(/[^\d+]/g,'');if(!phone.startsWith('+'))phone='+'+phone;const twofa=parts[1]?.trim()||common2fa||'';if(phone.length>=9)entries.push({phone,twofa});}
+  if(!entries.length){toast('Khong tim thay SDT hop le!','error');return;}
+  clearRows();entries.forEach(e=>addRow({phone:e.phone,twofa:e.twofa}));closeModal();toast(`Da import ${entries.length} SDT`,'ok');
+}
+function openBulkCode(){
+  if(!rows.length){toast('Chua co dong nao!','warn');return;}
+  const ref=rows.filter(r=>r.phone).map((r,i)=>`#${String(i+1).padStart(2,'0')} ${r.phone}${r.code?' ['+r.code+']':''}`).join('\n');
+  showModal('Nhap Code Hang Loat',`
+    <div class="text-sm" style="margin-bottom:6px">1 code/dong theo thu tu | SDT|code khop SDT | SDT|code|2FA</div>
+    ${ref?`<textarea readonly rows="3" style="width:100%;font-size:11px;font-family:monospace;background:var(--bg3);color:var(--text3)">${escHtml(ref)}</textarea>`:''}
+    <textarea id="bulk-codes" rows="8" style="width:100%;margin-top:8px;font-family:monospace" placeholder="12345\n+84912345678 | 54321\n+84987654321 | 11111 | 2fapwd"></textarea>
+    <div class="flex gap-2 mt-3"><button class="btn btn-success" onclick="applyBulkCodes()">Ap dung</button><button class="btn btn-ghost" onclick="closeModal()">Huy</button></div>`);
+}
+function applyBulkCodes(){
+  const text=document.getElementById('bulk-codes').value.trim();const parsed=[];
+  for(const line of text.split('\n')){const l=line.trim();if(!l)continue;const parts=l.split(/\s*\|\s*|\t+|\s{2,}/);if(parts.length===1){const code=parts[0].replace(/\D/g,'');if(code)parsed.push({phone:null,code,twofa:''});}else{let phone=parts[0].replace(/[^\d+]/g,'');if(!phone.startsWith('+'))phone='+'+phone;const code=parts[1]?.replace(/\D/g,'');const twofa=parts[2]?.trim()||'';if(code)parsed.push({phone,code,twofa});}}
+  if(!parsed.length){toast('Khong tim thay code!','error');return;}
+  let byPhone=0,byOrder=0,orderIdx=0;const emptyCodeRows=rows.filter(r=>!r.code);
+  for(const p of parsed){let target=null;if(p.phone){target=rows.find(r=>r.phone===p.phone&&!r.code);if(target)byPhone++;}else{if(orderIdx<emptyCodeRows.length){target=emptyCodeRows[orderIdx++];byOrder++;}}if(target){target.code=p.code;if(p.twofa)target.twofa=p.twofa;const tr=document.getElementById('tr-'+target.id);if(tr){const ci=tr.querySelector('.code-field');if(ci)ci.value=p.code;}}}
+  closeModal();toast(`Da dien code: ${byPhone} khop SDT, ${byOrder} theo thu tu`,'ok');
+}
+function openApply2FA(){
+  if(!rows.length){toast('Chua co dong nao!','warn');return;}
+  const empty=rows.filter(r=>!r.twofa);
+  showModal('Ap 2FA Chung',`
+    <div class="text-sm" style="margin-bottom:10px">${rows.length} row tong, ${rows.length-empty.length} da co 2FA, <strong>${empty.length}</strong> dang trong</div>
+    <div class="form-group"><label class="lbl">2FA Password</label><input id="apply-2fa-pwd" type="password" placeholder="Nhap password..." style="width:100%" autofocus></div>
+    <div class="flex gap-2 items-center mt-2"><input type="checkbox" id="show-2fa-pwd" onchange="document.getElementById('apply-2fa-pwd').type=this.checked?'text':'password'"><label for="show-2fa-pwd">Hien password</label></div>
+    <div class="flex gap-2 mt-3"><button class="btn btn-success" onclick="doApply2FA()">Ap dung cho ${empty.length} acc</button><button class="btn btn-ghost" onclick="closeModal()">Huy</button></div>`);
+  setTimeout(()=>document.getElementById('apply-2fa-pwd')?.focus(),100);
+}
+function doApply2FA(){const pwd=document.getElementById('apply-2fa-pwd').value.trim();if(!pwd){toast('Chua nhap password!','error');return;}let count=0;for(const row of rows){if(!row.twofa){row.twofa=pwd;count++;}}closeModal();toast(`Da ap 2FA cho ${count} acc`,'ok');}
+async function launchTile(){const base=document.getElementById('base-folder').value;if(!base){toast('Chua chon thu muc goc!','error');return;}toast('Dang mo Telegram...','info');const r=await post('/api/sync/launch-tile',{base_folder:base});if(r.ok)toast(`Dang mo ${r.count} Telegram...`,'info');else toast(r.msg||'Loi','error');}
+async function closeAllTabs(){const r=await post('/api/sync/close-all',{});if(r.ok)toast(`Da dong ${r.closed} tab (${r.survivors} con lai)`,'ok');else toast(r.msg||'Loi','error');refreshWindows();}
+function updateNaming(radio){document.querySelectorAll('.radio-opt').forEach(el=>{const inp=el.querySelector('input[type=radio][name="naming"]');if(inp)el.classList.toggle('checked',inp.checked)});}
+function updateRunMode(){document.querySelectorAll('[name="run-mode"]').forEach(r=>{r.closest('.radio-opt')?.classList.toggle('checked',r.checked)});}
+async function scanAccounts(){const base=document.getElementById('base-folder').value;if(!base){toast('Chua chon thu muc goc!','error');return;}const r=await get(`/api/admin/scan?base_folder=${encodeURIComponent(base)}`);adminAccounts=r.accounts||[];renderAccList(adminAccounts);toast(`Tim thay ${adminAccounts.length} acc`,'info');}
+function renderAccList(accs){const el=document.getElementById('acc-checkbox-list');if(!accs.length){el.innerHTML='<div class="empty-state">Khong tim thay session nao</div>';return;}el.innerHTML=accs.map(acc=>`<label class="acc-check-item"><input type="checkbox" onchange="toggleAcc('${acc.name}',this.checked)" ${selectedAdminAccs.has(acc.name)?'checked':''}><span title="${escAttr(acc.name)}">${escHtml(acc.name)}</span></label>`).join('');updateSelectedCount();}
+function filterAccList(q){const f=adminAccounts.filter(a=>a.name.toLowerCase().includes(q.toLowerCase()));renderAccList(f);}
+function toggleAcc(name,checked){if(checked)selectedAdminAccs.add(name);else selectedAdminAccs.delete(name);updateSelectedCount();}
+function selectAll(){adminAccounts.forEach(a=>selectedAdminAccs.add(a.name));renderAccList(adminAccounts);}
+function selectNone(){selectedAdminAccs.clear();renderAccList(adminAccounts);}
+function selectInvert(){adminAccounts.forEach(a=>{if(selectedAdminAccs.has(a.name))selectedAdminAccs.delete(a.name);else selectedAdminAccs.add(a.name)});renderAccList(adminAccounts);}
+function updateSelectedCount(){document.getElementById('acc-selected-count').textContent=`${selectedAdminAccs.size} acc duoc chon`;}
+function getAdminParams(){return{base_folder:document.getElementById('base-folder').value,selected:Array.from(selectedAdminAccs),mode:document.querySelector('[name="run-mode"]:checked')?.value||'parallel',delay:parseFloat(document.getElementById('run-delay').value)||0.5,max_parallel:parseInt(document.getElementById('run-max').value)||8};}
+function checkAdminReady(){if(!document.getElementById('base-folder').value){toast('Chua chon thu muc goc!','error');return false;}if(!selectedAdminAccs.size){toast('Chua chon acc nao!','warn');return false;}return true;}
+async function runCreateChannels(){if(!checkAdminReady())return;const r=await post('/api/admin/create-channels',{...getAdminParams(),amount:parseInt(document.getElementById('ch-amount').value)||1,prefix:document.getElementById('ch-prefix').value,about:document.getElementById('ch-about').value,megagroup:document.querySelector('[name="ch-type"]:checked')?.value==='true',delay:parseFloat(document.getElementById('ch-delay').value)||1});toast(r.ok?'Da bat dau tao channel...':(r.detail||'Loi'),r.ok?'info':'error');}
+async function runCreatePublic(){if(!checkAdminReady())return;const r=await post('/api/admin/create-public-channels',{...getAdminParams(),amount:parseInt(document.getElementById('pub-amount').value)||1,title:document.getElementById('pub-title').value,about:document.getElementById('pub-about').value,username_prefix:document.getElementById('pub-uname').value,suffix_mode:document.getElementById('pub-suffix').value,photo_path:document.getElementById('pub-photo').value,welcome_msg:document.getElementById('pub-welcome').value,delay:parseFloat(document.getElementById('pub-delay').value)||2});toast(r.ok?'Da bat dau tao kenh public...':(r.detail||'Loi'),r.ok?'info':'error');}
+async function runPromote(){if(!checkAdminReady())return;const r=await post('/api/admin/promote',{...getAdminParams(),channels:document.getElementById('prom-channels').value,usernames:document.getElementById('prom-users').value,full_rights:document.getElementById('prom-full').checked});toast(r.ok?'Da bat dau cap admin...':(r.detail||'Loi'),r.ok?'info':'error');}
+async function runFolderPromote(){if(!checkAdminReady())return;const r=await post('/api/admin/folder-promote',{...getAdminParams(),folder_name:document.getElementById('fp-folder').value,usernames:document.getElementById('fp-users').value,full_rights:document.getElementById('fp-full').checked});toast(r.ok?'Da bat dau cap admin...':(r.detail||'Loi'),r.ok?'info':'error');}
+async function runAutoFolder(){if(!checkAdminReady())return;const r=await post('/api/admin/auto-folder',{...getAdminParams(),folder_name:document.getElementById('af-name').value});toast(r.ok?'Da bat dau auto folder...':(r.detail||'Loi'),r.ok?'info':'error');}
+async function runAutoPromote(){if(!checkAdminReady())return;const r=await post('/api/admin/auto-promote',{...getAdminParams(),usernames:document.getElementById('ap-users').value,full_rights:document.getElementById('ap-full').checked});toast(r.ok?'Da bat dau auto-promote...':(r.detail||'Loi'),r.ok?'info':'error');}
+async function runConsolidate(){if(!checkAdminReady())return;const r=await post('/api/admin/consolidate',{...getAdminParams(),master_acc:document.getElementById('cons-master').value,folder_name:document.getElementById('cons-folder').value,link_title:document.getElementById('cons-title').value,private_handling:document.getElementById('cons-private').value});toast(r.ok?'Da bat dau don ve acc tong...':(r.detail||'Loi'),r.ok?'info':'error');}
+async function runDeleteAccounts(){if(!checkAdminReady())return;const c1=document.getElementById('del-confirm1').checked;const c2=document.getElementById('del-confirm2').checked;if(!c1||!c2){toast('Vui long xac nhan ca 2 checkbox!','error');return;}if(!confirm(`XOA VINH VIEN ${selectedAdminAccs.size} account? KHONG THE UNDO!`))return;const r=await post('/api/admin/delete-accounts',{...getAdminParams(),reason:document.getElementById('del-reason').value});toast(r.ok?`Da bat dau xoa ${selectedAdminAccs.size} account...`:(r.detail||'Loi'),r.ok?'warn':'error');}
+async function loadChannelsTxt(){const base=document.getElementById('base-folder').value;if(!base){toast('Chua chon thu muc goc!','error');return;}try{const resp=await fetch(`/api/read-file?path=${encodeURIComponent(base+'\\channels.txt')}`);if(resp.ok){const text=await resp.text();document.getElementById('prom-channels').value=text;toast('Da tai channels.txt','ok');}else toast('Khong tim thay channels.txt','warn');}catch{toast('Loi tai file','error');}}
+async function refreshWindows(){const r=await get('/api/sync/windows');updateWindowList(r.windows||[]);}
+function updateWindowList(windows){trackedWindows=windows;const el=document.getElementById('sync-windows-list');const count=document.getElementById('sync-count');count.textContent=`${windows.length} tab`;if(!windows.length){el.innerHTML='<div class="empty-state">Chua co tab nao</div>';return;}el.innerHTML=windows.map(w=>`<div class="window-item"><span class="wname">&#x1F4F1; ${escHtml(w.name)}</span><span class="winfo">PID: ${w.pid}</span></div>`).join('');}
+function showWindowList(){if(!trackedWindows.length){toast('Khong co tab nao','warn');return;}showModal('Danh Sach Tab',`<pre style="font-size:12px;color:var(--text);line-height:1.6">${escHtml(trackedWindows.map((w,i)=>`${String(i+1).padStart(2,'0')}. ${w.name}  PID:${w.pid}`).join('\n'))}</pre><button class="btn btn-ghost mt-3" onclick="closeModal()">Dong</button>`);}
+async function broadcastText(){const text=document.getElementById('sync-text').value;if(!text.trim()){toast('Noi dung trong!','error');return;}const r=await post('/api/sync/broadcast',{text,delay:parseFloat(document.getElementById('sync-delay').value)||0.3,press_enter:document.getElementById('sync-enter').checked});if(r.ok)toast(`Dang gui toi ${r.count} tab...`,'info');else toast(r.msg||'Loi','error');}
+async function retileWindows(){const r=await post('/api/sync/retile',{});toast(r.ok?'Da re-tile cua so':(r.msg||'Loi'),r.ok?'ok':'error');}
+async function bringToFront(){const r=await post('/api/sync/bring-front',{});toast(r.ok?`Da dua ${r.count} tab len tren`:(r.msg||'Loi'),r.ok?'ok':'error');}
+function showModal(title,html){document.getElementById('modal-title').textContent=title;document.getElementById('modal-body').innerHTML=html;document.getElementById('modal-overlay').style.display='block';document.getElementById('modal').style.display='block';}
+function closeModal(){document.getElementById('modal-overlay').style.display='none';document.getElementById('modal').style.display='none';}
+function toast(msg,type='info'){const icons={ok:'\u2705',error:'\u274C',warn:'\u26A0\uFE0F',info:'\u2139\uFE0F'};const el=document.createElement('div');el.className='toast '+(type==='ok'?'ok':type==='error'?'error':type==='warn'?'warn':'');el.innerHTML=`<span class="toast-icon">${icons[type]||'\u2139\uFE0F'}</span><span class="toast-msg">${escHtml(msg)}</span>`;document.getElementById('toast-container').appendChild(el);setTimeout(()=>{el.style.animation='fadeOut .3s ease forwards';setTimeout(()=>el.remove(),300)},3500);}
+function escHtml(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function escAttr(s){return String(s||'').replace(/"/g,'&quot;');}
+document.addEventListener('DOMContentLoaded',()=>{
+  connectWS();
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();});
+  setInterval(async()=>{const r=await get('/api/tasks');updateTaskBadge(r.count||0);},3000);
+});
+</script>
+</body>
+</html>"""
+
+
+def _load_html() -> str:
+    ext = BASE_DIR / "static" / "index.html"
+    if ext.exists():
+        try:
+            return ext.read_text(encoding="utf-8")
+        except Exception:
+            pass
+    return _EMBEDDED_HTML
 
 # ══════════════════════════════════════════════════════════
 #  CONFIG
@@ -851,29 +1542,29 @@ async def _run_per_account(
 # ══════════════════════════════════════════════════════════
 #  FASTAPI APP
 # ══════════════════════════════════════════════════════════
-app = FastAPI(title="Multi-Telegram Tool v8")
+@asynccontextmanager
+async def _lifespan(app_instance: FastAPI):
+    """Startup / shutdown với lifespan (thay on_event deprecated)."""
+    _load_config()
+    if not TELETHON_OK:
+        log("error", f"⚠️ Telethon/opentele chưa cài đầy đủ")
+        log("info", "👉 Chạy: pip install telethon opentele pygetwindow pywin32")
+    else:
+        log("ok", "✅ Multi-Telegram Tool v8 đã sẵn sàng!")
+    log("info", "🌐 Giao diện: http://localhost:8899")
+    yield  # ← app chạy ở đây
+    # Shutdown: không cần dọn dẹp đặc biệt
+
+
+app = FastAPI(title="Multi-Telegram Tool v8", lifespan=_lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"],
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
-@app.on_event("startup")
-async def _startup():
-    _load_config()
-    if not TELETHON_OK:
-        log("error", f"⚠️ Telethon/opentele chưa cài: {_import_err}")
-        log("info", "👉 Chạy: pip install telethon opentele pygetwindow pywin32")
-    else:
-        log("ok", "✅ Multi-Telegram Tool v8 đã sẵn sàng!")
-    log("info", f"🌐 Giao diện: http://localhost:8899")
-
-
-# ── Static files ──
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-
 @app.get("/")
 async def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    """Serve giao diện HTML — ưu tiên static/index.html, fallback sang bản nhúng."""
+    return HTMLResponse(_load_html())
 
 
 # ── WebSocket log stream ──
