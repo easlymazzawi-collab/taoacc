@@ -1,74 +1,100 @@
-# Multi-Telegram Tool v7 — Refactor
+# Multi-Telegram Tool v8 — Web Interface
 
-## Thay đổi chính so với v6
+Gộp toàn bộ 6 file Python của v7 thành **1 file backend** + **1 file HTML** đẹp.  
+Chỉ cần **double-click `start.bat`** là chạy, trình duyệt tự mở.
 
-### 1. Fix UI đơ (3 nguyên nhân gốc)
-- **LogBus batched** (`core_runtime.py`): log dồn vào queue, flush 1 nhịp/100ms.
-  Trước đây mỗi dòng log gọi `after(0, write)` riêng → batch 1000 thao tác = 1000 event
-  tk → main loop nghẹn. Test: submit 100 dòng chỉ 0.19ms.
-- **SharedTaskRunner** (`core_runtime.py`): 1 event loop nền duy nhất cho cả app.
-  Trước đây mỗi AccountRow + mỗi `_run_in_bg` tạo loop riêng → 30+ loop song song
-  → GIL contention.
-- **AccountListView** (`account_panel.py`): dùng `tk.Checkbutton` thay
-  `CTkCheckBox` (nhanh hơn ~10x khi 30+ acc trong scroll frame —
-  GitHub CustomTkinter issue #1461, #2690).
+---
 
-### 2. Code gọn hơn
-- Tách `main.py` (2400 dòng) thành 6 module riêng:
-  - `core_runtime.py` (361 dòng) — hạ tầng dùng chung
-  - `account_panel.py` (294 dòng) — danh sách acc + PerAccountRunner
-  - `admin_tab.py` (1079 dòng) — Tab Admin (giảm từ ~1300 dòng nhờ PerAccountRunner)
-  - `login_tab.py` (660 dòng) — Tab Đăng nhập
-  - `sync_tab.py` (249 dòng) — Tab Đồng bộ
-  - `main.py` (322 dòng) — entry point
-- `PerAccountRunner` gom pattern `for acc: connect → do_one → disconnect`
-  vào 1 helper → 8 sub-tab gọi 1 dòng thay vì 50 dòng copy-paste mỗi cái.
+## 🚀 Cài đặt & Khởi động
 
-### 3. Tính năng mới
-- **Auto save/load config** (`ConfigStore`): mọi setting tự lưu vào
-  `tg_tool_config.json`. Mở app lại không phải gõ lại base_folder, prefix,
-  delay, các text box… Áp dụng cho cả 3 tab.
-- **Nút ⏹ Hủy hết** ở header + Nút **⏹ DỪNG** trong Admin tab: cancel task
-  đang chạy (đã ghi vào Telegram thì không undo được, chỉ hủy phần chưa
-  gửi).
-- **Filter log** (4 mức: all / ok+error / error only / info+ok) trong cửa sổ log.
-- **Save log ra file** (.log/.txt) — nút 💾 trong log window.
-- **Acc search/filter** + **select invert** + **count badge** trong danh sách acc.
-- **Badge trạng thái per acc** (⏳ chạy, ✓ ok, ✗ lỗi, ⏹ hủy) hiện ngay trong
-  danh sách khi đang chạy task.
-- **Restore last active tab** — mở app lại đúng tab vừa dùng.
-- **Indicator task đang chạy** ở header: `⚙ N task chạy` hiện realtime.
-
-## Cấu trúc file
-
-```
-tg_tool_v7/
-├── admin_channel.py   ← Backend logic Telethon (KHÔNG đổi, vẫn 832 dòng)
-├── core_runtime.py    ← LogBus + SharedTaskRunner + ConfigStore + AsyncBridge
-├── account_panel.py   ← AccountListView (nhanh) + PerAccountRunner
-├── login_tab.py       ← Tab 1: Đăng nhập + Bulk + Tile windows
-├── admin_tab.py       ← Tab 2: Admin & Channel (8 sub-tab)
-├── sync_tab.py        ← Tab 3: Đồng bộ + WindowManager
-└── main.py            ← Entry point
-```
-
-## Cài & chạy
-
+### Lần đầu (cài dependencies):
 ```bash
-pip install customtkinter telethon opentele pygetwindow pywin32
-python main.py
+pip install fastapi uvicorn[standard] telethon opentele pygetwindow pywin32
 ```
 
-## Test logic (đã verify)
-- `SharedTaskRunner`: submit/cancel/cancel_all/shutdown đều OK
-- `ConfigStore`: save/load JSON OK
-- `LogBus`: batched flush + filter + export OK
-- Syntax 6 file đều pass
+### Chạy (chọn 1 trong 2):
+```
+# Windows — double-click:
+start.bat
 
-## Lưu ý
-- Config file `tg_tool_config.json` tự tạo cạnh main.py. Xóa file này để reset
-  về mặc định.
-- Khi đóng app sẽ tự save config + shutdown runner sạch.
-- Trong Admin tab, ô **Max song song** mặc định 8 (semaphore giới hạn coroutine
-  concurrent — tránh Telegram flood).
-- Xóa account luôn chạy serial dù chọn parallel — an toàn hơn.
+# Hoặc:
+python app.py
+```
+
+Trình duyệt sẽ tự mở tại `http://localhost:8899`
+
+---
+
+## 📁 Cấu trúc file (gộn gọn)
+
+```
+workspace/
+├── app.py              ← Backend duy nhất (thay thế 6 file Python cũ)
+├── static/
+│   └── index.html      ← Giao diện HTML đẹp, 1 file
+├── start.bat           ← Double-click để chạy (Windows)
+├── requirements.txt    ← Dependencies
+└── tg_tool_config.json ← Auto-save settings (tự tạo)
+```
+
+## 🔥 So sánh v7 vs v8
+
+| | v7 | v8 |
+|---|---|---|
+| Files Python | 6 files | **1 file** (`app.py`) |
+| Giao diện | CustomTkinter (desktop) | **HTML/CSS/JS** (web) |
+| Khởi động | `python main.py` | **Double-click** `start.bat` |
+| Log realtime | Cửa sổ riêng | **Panel bên phải** (WebSocket) |
+| Trình duyệt | ❌ | ✅ Tự mở |
+| Cross-platform UI | ❌ | ✅ |
+
+---
+
+## 🎯 Tính năng
+
+### 🔐 Tab Đăng nhập
+- Tạo bảng acc linh hoạt (1–200 acc)
+- Nhập SĐT hàng loạt (kèm 2FA mỗi dòng)
+- Nhập code hàng loạt (theo thứ tự hoặc khớp SĐT)
+- Áp 2FA chung cho tất cả acc trống
+- Gửi mã / Đăng nhập từng acc hoặc tất cả
+- Export tdata (opentele)
+- Đặt tên folder: @username / Tên hiển thị / Prefix / Giữ nguyên
+- Copy Telegram Portable tự động
+- Mở tất cả Telegram.exe + chia màn hình lưới
+
+### 🛠️ Tab Admin & Channel
+- **Tạo channel/group riêng tư** (prefix tùy chọn, export link)
+- **Tạo kênh public** (username ngẫu nhiên, ảnh, welcome msg)
+- **Cấp admin** cho danh sách user vào danh sách kênh
+- **Cấp admin theo Folder TG** (lấy kênh từ folder filter)
+- **Auto Folder** (gom tất cả kênh đang admin vào 1 folder)
+- **Auto-promote** (cấp user vào tất cả kênh đang admin)
+- **Dồn về acc tổng** via chatlist link
+- **Xóa account** (serial, xác nhận 2 bước)
+
+### 🔄 Tab Đồng bộ Tab
+- Theo dõi tab Telegram đã mở
+- Broadcast text đồng bộ qua clipboard + keybd
+- Re-tile cửa sổ (xếp lưới tự động)
+- Đưa cửa sổ lên trên, đóng tất cả
+
+---
+
+## ⚙️ Cấu hình tự động lưu
+Settings được lưu vào `tg_tool_config.json` và tự restore khi mở lại.
+
+---
+
+## 📋 Requirements
+```
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+telethon>=1.29.0
+opentele>=1.15.1
+pygetwindow>=0.0.9
+pywin32>=306
+```
+
+> **Lưu ý:** `pygetwindow` và `pywin32` chỉ cần trên Windows (cho tính năng Sync Tab).  
+> Các tính năng Login và Admin hoạt động trên mọi OS.
